@@ -1,7 +1,9 @@
 import axios from "axios";
 import { tokenService } from "../services/tokenService";
 
-const API_BASE_URL = "http://127.0.0.1:8000";
+// ⚠️ IMPORTANT : PAS de localhost en production
+// Laisse vide pour utiliser le même domaine que le frontend
+const API_BASE_URL = "";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -22,6 +24,7 @@ const processQueue = (error, token = null) => {
   refreshQueue = [];
 };
 
+// 🔹 Interceptor REQUEST
 api.interceptors.request.use(
   (config) => {
     const token = tokenService.getAccessToken();
@@ -33,17 +36,25 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+// 🔹 Interceptor RESPONSE (refresh automatique)
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    if (!error.response || error.response.status !== 401 || originalRequest._retry) {
+
+    if (
+      !error.response ||
+      error.response.status !== 401 ||
+      originalRequest._retry
+    ) {
       return Promise.reject(error);
     }
 
     const refreshToken = tokenService.getRefreshToken();
+
     if (!refreshToken) {
       tokenService.clearTokens();
+      window.location.href = "/login";
       return Promise.reject(error);
     }
 
@@ -60,13 +71,24 @@ api.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const refreshResponse = await axios.post(`${API_BASE_URL}/api/token/refresh/`, {
+      const refreshResponse = await axios.post(
+        "/api/token/refresh/",
+        {
+          refresh: refreshToken,
+        }
+      );
+
+      const newAccess = refreshResponse.data.access;
+
+      tokenService.setTokens({
+        access: newAccess,
         refresh: refreshToken,
       });
-      const newAccess = refreshResponse.data.access;
-      tokenService.setTokens({ access: newAccess });
+
       processQueue(null, newAccess);
+
       originalRequest.headers.Authorization = `Bearer ${newAccess}`;
+
       return api(originalRequest);
     } catch (refreshError) {
       processQueue(refreshError, null);
@@ -80,3 +102,5 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+

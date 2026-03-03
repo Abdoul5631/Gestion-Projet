@@ -15,33 +15,39 @@ class ReportViewSet(viewsets.ModelViewSet):
     queryset = Report.objects.select_related("author").all().order_by("-created_at")
 
     def get_queryset(self):
+        # make sure we build a fresh base queryset on every invocation
+        # to avoid stale cached results. the class attr "self.queryset"
+        # is evaluated lazily and then reused, which previously caused an
+        # admin list operation to return deleted reports (see regression
+        # test below).
         import logging
         logger = logging.getLogger("django")
         logger.warning("[DEBUG] get_queryset appelé pour lister les rapports.")
+
+        base_qs = Report.objects.select_related("author").all().order_by("-created_at")
+
         user = self.request.user
         role = _role(user)
         if role == "admin":
-            return self.queryset
+            return base_qs
         if role == "manager":
             # rapports liés à un projet d'une équipe du manager
-            return self.queryset.filter(project__team__members=user).distinct()
+            return base_qs.filter(project__team__members=user).distinct()
         if role == "member":
             from projects.models import Project
             my_projects = Project.objects.filter(team__members=user)
             my_project_ids = list(my_projects.values_list("id", flat=True))
             manager_ids = list(my_projects.exclude(manager=None).values_list("manager_id", flat=True))
-            import logging
-            logger = logging.getLogger("django")
             logger.warning(f"DEBUG - Projets du membre: {my_project_ids}, Managers: {manager_ids}")
-            own_reports = self.queryset.filter(author=user)
-            global_reports = self.queryset.filter(
+            own_reports = base_qs.filter(author=user)
+            global_reports = base_qs.filter(
                 project_id__in=my_project_ids,
                 author_id__in=manager_ids
             )
             logger.warning(f"DEBUG - Rapports globaux trouvés: {[r.id for r in global_reports]}")
             return own_reports | global_reports
         # fallback : aucun rapport
-        return self.queryset.none()
+        return base_qs.none()
 
     def perform_create(self, serializer):
         # ensure project association is valid

@@ -18,12 +18,20 @@ class ProjectFileViewSet(viewsets.ModelViewSet):
     queryset = ProjectFile.objects.select_related("project", "project__team", "uploaded_by").all().order_by("-upload_date")
 
     def get_queryset(self):
+        """Return a fresh queryset each time to avoid stale cache issues.
+
+        The class attribute ``self.queryset`` is evaluated lazily but then reused,
+        which previously caused admins to continue seeing an old snapshot of
+        files even after managers or members uploaded new ones.  We recreate the
+        base queryset on each call and apply filters as needed.
+        """
+        base_qs = ProjectFile.objects.select_related("project", "project__team", "uploaded_by").all().order_by("-upload_date")
         user = self.request.user
         if _role(user) == "admin":
-            return self.queryset
+            return base_qs
         if self.action == "list":
-            return self.queryset.filter(project__team__members=user).distinct()
-        return self.queryset
+            return base_qs.filter(project__team__members=user).distinct()
+        return base_qs
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
